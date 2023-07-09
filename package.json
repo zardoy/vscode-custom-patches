@@ -1,6 +1,7 @@
 {
     "name": "custom-patches",
     "displayName": "Custom Patches",
+    "description": "Advanced usage only. Allows you to patch extensions with your code.",
     "publisher": "zardoy",
     "version": "0.0.0-dev",
     "license": "MIT",
@@ -15,6 +16,9 @@
             }
         ]
     },
+    "activationEvents": [
+        "onStartupFinished"
+    ],
     "scripts": {
         "start": "vscode-framework start",
         "build": "tsc && vscode-framework build",
