@@ -1,0 +1,6 @@
+{
+    "extends": "zardoy",
+    "rules": {
+        "@typescript-eslint/member-ordering": "off"
+    }
+}
