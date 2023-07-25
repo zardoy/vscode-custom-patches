@@ -37,10 +37,9 @@ export const applyUserPatchToText = (
         sourceNeedles.push(item.slice(2, -2))
     }
 
-    const lastSearch = Array.isArray(search) ? search.at(-1)! : search
-    const lastSourceNeedle = findInSource!(sourceNeedles)
-    let curIndex = sourceNeedles.length ? lastSourceNeedle.offset : -1
-    let lastNeedleLength = regularNeedles.at(-1)?.length ?? lastSourceNeedle.name.length
+    const lastSourceNeedle = sourceNeedles.length ? findInSource!(sourceNeedles) : undefined
+    let curIndex = lastSourceNeedle?.offset ?? -1
+    let lastNeedleLength = regularNeedles.at(-1)?.length ?? lastSourceNeedle!.name.length
     for (const s of regularNeedles) {
         const newIndexStart = curIndex + 1
         curIndex = newIndexStart + text.indexOf(s, newIndexStart)
@@ -61,7 +60,7 @@ export const applyUserPatchToText = (
     if (insertText) {
         if (findInSource) {
             insertText.replace(/{{(.*?)}}/g, (_, needle) => {
-                const { name } = findInSource!([...sourceNeedles, needle])
+                const { name } = findInSource([...sourceNeedles, needle])
                 return name
             })
         }
