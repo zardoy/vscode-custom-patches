@@ -32,6 +32,12 @@ dependencies:
   lodash:
     specifier: ^4.17.21
     version: 4.17.21
+  rambda:
+    specifier: ^8.3.0
+    version: 8.3.0
+  source-map:
+    specifier: ^0.7.4
+    version: 0.7.4
   strip-json-comments:
     specifier: ^5.0.1
     version: 5.0.1
@@ -3642,6 +3648,10 @@ packages:
     resolution: {integrity: sha512-y/M9weqWAH4iopRd7EHDEQQvpFPHj1AA3oHozE9tfITHUtTR7Z9PSlIRRG2l1GuW7sefC1cXFfIcF+cgnShdBA==}
     dev: false
 
+  /rambda@8.3.0:
+    resolution: {integrity: sha512-XN5B8zIB6efO9Y9SrzdLQyk6XX3U7OyWESIvNYnm7AH8KCbXBtzsUVFaJYpUcIx5VahmvNV7fNjevR/ohc90jw==}
+    dev: false
+
   /react-is@16.13.1:
     resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
     dev: true
@@ -3899,6 +3909,11 @@ packages:
     requiresBuild: true
     dev: false
     optional: true
+
+  /source-map@0.7.4:
+    resolution: {integrity: sha512-l3BikUxvPOcn5E74dZiq5BGsTb5yEwhaTSzccU6t4sDOH8NWJCstKO5QT2CvtFoK6F0saL7p9xHAqHOlCPJygA==}
+    engines: {node: '>= 8'}
+    dev: false
 
   /spdx-correct@3.2.0:
     resolution: {integrity: sha512-kN9dJbvnySHULIluDHy32WHRUu3Og7B9sbY7tsFLctQkIqnMh3hErYgdMjTYuqmcXX+lK5T1lnUt3G7zNswmZA==}

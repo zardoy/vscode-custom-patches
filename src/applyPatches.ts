@@ -3,7 +3,6 @@ import * as vscode from 'vscode'
 import got from 'got'
 import { extensionCtx, getExtensionSetting, registerExtensionCommand, showQuickPick } from 'vscode-framework'
 import stripJsonComments from 'strip-json-comments'
-import { JsonPatchDescription } from './configurationType'
 import isOnline from 'is-online'
 import { friendlyNotification } from '@zardoy/vscode-utils/build/ui'
 import { Utils } from 'vscode-uri'
@@ -11,10 +10,11 @@ import crypto from 'crypto'
 import { fsExists } from '@zardoy/vscode-utils/build/fs'
 import { watchExtensionSettings } from '@zardoy/vscode-utils/build/settings'
 import _ from 'lodash'
+import getPatches, { DownloadedPatchesStore } from './getPatches'
+import { doPatch } from './builtinCorePatch'
+import { applyUserPatchToText } from './textUtils'
+import { JsonPatchDescription } from './configurationType'
 
-type DownloadedPatchesStore = {
-    [url: string]: JsonPatchDescription
-}
 const updateRemotePatches = async (force = false) => {
     const toDownload = getExtensionSetting('remotePatches')
     if (!toDownload.length) return
@@ -82,15 +82,22 @@ const getDevExt = (id: string): ExtInterface | undefined => {
 const appliedPatchesPackageJsonKey = 'customPatches-appliedPatches'
 const applyPatches = async (type: 'local' | 'remote') => {
     const silentPatchErrors = getExtensionSetting('silentPatchErrors')
-    const patchPackets = type === 'local' ? getExtensionSetting('localPatches') : extensionCtx.globalState.get<DownloadedPatchesStore>('downloaded-patches', {})
     const { fs } = vscode.workspace
+
+    const patchPackets = getPatches(type, 'extensions')
 
     let needsExtensionHostRestart = false
     let appliedPatches = 0
-    const patchPacketsByExt = _.groupBy(Array.isArray(patchPackets) ? patchPackets : Object.values(patchPackets), ({ target }) => {
-        if (!target?.extension) throw new PatchSyntaxError('Patch must target with extension!')
-        return target.extension
-    })
+    const patchPacketsByExt = {} as Record<string, JsonPatchDescription[]>
+    for (const packetPatch of patchPackets) {
+        if (!('extension' in packetPatch.target) || !packetPatch.target?.extension) throw new PatchSyntaxError('Patch must target with extension!')
+        const extensions = packetPatch.target.extension
+        for (const extension of Array.isArray(extensions) ? extensions : [extensions]) {
+            patchPacketsByExt[extension] ??= []
+            patchPacketsByExt[extension]!.push(packetPatch)
+        }
+    }
+
     let i = -1
     for (const [extId, packetPatches] of Object.entries(patchPacketsByExt)) {
         i++
@@ -101,11 +108,22 @@ const applyPatches = async (type: 'local' | 'remote') => {
             continue
         }
         const addPatchHashes = {} as Record<string, string[]>
-        if (ext.isActive) needsExtensionHostRestart = true
         for (const packetPatch of packetPatches) {
             const patchHash = `${type}-${crypto.createHash('md5').update(JSON.stringify(packetPatch)).digest('hex')}`
-            if (ext.packageJSON[appliedPatchesPackageJsonKey]?.[patchHash]) {
-                console.log(`Skipping patch ${patchHash} for ${extId} because it was already applied.`)
+            const checkSkipPatch = packageJson => {
+                if (packageJson[appliedPatchesPackageJsonKey]?.[patchHash]) {
+                    console.log(`Skipping patch ${patchHash} for ${extId} because it was already applied.`)
+                    return true
+                }
+                return false
+            }
+
+            if (checkSkipPatch(ext.packageJSON)) {
+                continue
+            }
+            // double check that patch is not already applied, it will be happening until next window reload, so it should't be a performance issue
+            const actualPackageJson = JSON.parse(await fs.readFile(Utils.joinPath(ext.extensionUri, 'package.json')).then(buf => buf.toString()))
+            if (checkSkipPatch(actualPackageJson)) {
                 continue
             }
             try {
@@ -124,59 +142,31 @@ const applyPatches = async (type: 'local' | 'remote') => {
                         else throw new Error(`Required file to patch ${file} is missing`)
                     }
 
-                    for (const { search, insertText, insertOffset = 0, removeRange, patchOptional, insertMode = 'after' } of patches) {
-                        if (!search.length) throw new Error('Patch must have at least one search string.')
-                        let curIndex = -1
-                        const lastSearch = Array.isArray(search) ? search.at(-1)! : search
-                        for (const s of Array.isArray(search) ? search : [search]) {
-                            const newIndexStart = curIndex + 1
-                            curIndex = newIndexStart + fileContents.indexOf(s, newIndexStart)
-                        }
+                    if (!patches.length) continue
 
-                        if (curIndex === -1) {
-                            if (patchOptional) continue
-                            else throw new Error(`Failed to find patch string ${JSON.stringify(search)} in file ${file}`)
-                        }
+                    const backupFile = targetFileUri.with({
+                        path: `${targetFileUri.path}.backup`,
+                    })
 
-                        // we're going to change content below, so write backup first
-                        // #region write backup file
-                        const backupFile = targetFileUri.with({
-                            path: `${targetFileUri.path}.backup`,
-                        })
-                        // todo better resolve conflicts
-                        if (!(await fsExists(backupFile))) {
-                            await fs.writeFile(backupFile, new TextEncoder().encode(fileContents))
-                        }
-                        patchedFiles.push(file)
-                        // #endregion
-
-                        if (removeRange) {
-                            fileContents = fileContents.slice(0, curIndex + removeRange[0]) + fileContents.slice(curIndex + removeRange[1])
-                        }
-
-                        if (insertText) {
-                            const lastSearchLength = lastSearch.length
-                            let beforeIndex = curIndex + insertOffset
-                            if (insertMode === 'after') {
-                                beforeIndex += lastSearchLength
-                            }
-
-                            let afterIndex = beforeIndex
-                            if (insertMode === 'replace') {
-                                afterIndex += lastSearchLength
-                            }
-
-                            fileContents = fileContents.slice(0, beforeIndex) + insertText + fileContents.slice(afterIndex)
-                        }
+                    if (!(await fsExists(backupFile))) {
+                        await fs.writeFile(backupFile, new TextEncoder().encode(fileContents))
                     }
 
+                    for (const patch of patches) {
+                        fileContents = applyUserPatchToText(file, fileContents, patch) ?? fileContents
+                    }
+
+                    patchedFiles.push(file)
                     await fs.writeFile(targetFileUri, new TextEncoder().encode(fileContents))
                 }
 
                 addPatchHashes[patchHash] = patchedFiles
                 console.log(`Applied patch i=${i}: ${patchHash} for ${extId}`)
                 appliedPatches++
+
+                if (ext.isActive) needsExtensionHostRestart = true
             } catch (err) {
+                console.error(`Failed to apply patch i=${i}: ${patchHash} for ${extId}`)
                 console.error(err)
                 if (!silentPatchErrors) {
                     void vscode.window.showErrorMessage(`Failed to apply ${type} patch i=${i} for ${extId}: ${err.message}`)
@@ -273,5 +263,26 @@ export default async () => {
             quickPick.hide()
         })
         quickPick.show()
+    })
+
+    registerExtensionCommand('applyWorkbenchJsPatches', async () => {
+        const patchPackets = [...getPatches('local', 'core'), ...getPatches('remote', 'core')]
+
+        try {
+            await doPatch(patchPackets.flatMap(patchPacket => patchPacket.patches))
+        } catch (err) {
+            console.error(err)
+            void vscode.window.showErrorMessage(err.message)
+        }
+    })
+
+    registerExtensionCommand('inspectWorkbenchJsPatchLocation', async () => {
+        const userInput = await vscode.window.showInputBox({
+            title: 'Inspect generated location. Format: source-file-relative-path source-needle1 source-needle2 ...',
+            placeHolder: 'src/vs/platform/quickinput/browser/quickInput.ts _sortByLabel',
+        })
+        if (!userInput) return
+
+        await doPatch([], userInput.split(' '))
     })
 }
