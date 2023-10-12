@@ -54,7 +54,15 @@ export const doPatch = async (allPatches: JsonPatchDescription['patches'], inspe
 
     let text = await vscode.workspace.fs.readFile(fileBackupUri).then(String)
 
-    fetchedMapContent = JSON.parse(await getSourceMapsFromText(text)) as RawSourceMap
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Downloading source map for workbench.js patching',
+        },
+        async () => {
+            fetchedMapContent ??= JSON.parse(await getSourceMapsFromText(text)) as RawSourceMap
+        },
+    )
 
     const c = await new SourceMapConsumer(fetchedMapContent)
 
@@ -78,11 +86,6 @@ export const doPatch = async (allPatches: JsonPatchDescription['patches'], inspe
                 }) ?? text
         }
     }
-
-    const offset = getGeneratedOffset('src/vs/platform/quickinput/browser/quickInput.ts', ['_sortByLabel'])
-
-    const pos = getLineCharacterPosition(offset, text)
-    console.log(pos)
 
     // write text
     await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(text))
