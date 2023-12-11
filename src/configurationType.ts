@@ -18,6 +18,10 @@ export type Configuration = {
 export type FileJsonPatch = {
     search: string | string[]
     /**
+     * @default single
+     */
+    searchMode?: 'single' | 'multiple'
+    /**
      * Applied after removeRange is applied
      */
     insertText?: string

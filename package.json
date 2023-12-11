@@ -30,7 +30,8 @@
     "scripts": {
         "start": "vscode-framework start --skip-launching",
         "build": "tsc && vscode-framework build",
-        "lint-disabled": "eslint src/**"
+        "lint": "eslint src/**",
+        "test": "vitest"
     },
     "dependencies": {
         "@types/lodash": "^4.14.195",
@@ -46,13 +47,14 @@
         "source-map": "^0.7.4",
         "strip-json-comments": "^5.0.1",
         "typescript": "^5.1.6",
+        "vitest": "^1.0.4",
         "vscode-framework": "^0.0.18",
         "vscode-uri": "^3.0.7"
     },
     "devDependencies": {
         "@types/got": "^9.6.12",
         "eslint": "^8.44.0",
-        "eslint-config-zardoy": "^0.2.16"
+        "eslint-config-zardoy": "^0.2.17"
     },
     "prettier": {
         "semi": false,

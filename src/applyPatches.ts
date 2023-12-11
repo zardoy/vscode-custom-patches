@@ -1,24 +1,27 @@
+/* eslint-disable sonarjs/no-duplicate-string */
 import * as vscode from 'vscode'
 
+import crypto from 'crypto'
 import got from 'got'
 import { extensionCtx, getExtensionSetting, registerExtensionCommand, showQuickPick } from 'vscode-framework'
 import stripJsonComments from 'strip-json-comments'
 import isOnline from 'is-online'
 import { friendlyNotification } from '@zardoy/vscode-utils/build/ui'
 import { Utils } from 'vscode-uri'
-import crypto from 'crypto'
 import { fsExists } from '@zardoy/vscode-utils/build/fs'
 import { watchExtensionSettings } from '@zardoy/vscode-utils/build/settings'
 import _ from 'lodash'
-import getPatches, { DownloadedPatchesStore } from './getPatches'
+import getPatches, { type DownloadedPatchesStore } from './getPatches'
 import { doPatch } from './builtinCorePatch'
 import { applyUserPatchToText } from './textUtils'
-import { JsonPatchDescription } from './configurationType'
+import { type JsonPatchDescription } from './configurationType'
 
-const updateRemotePatches = async (force = false) => {
-    const toDownload = getExtensionSetting('remotePatches')
-    if (!toDownload.length) return
-    if (!force) {
+const updateRemotePatches = async () => {
+    const allRemotePatches = getExtensionSetting('remotePatches')
+    if (allRemotePatches.length === 0) return
+    const downloadedPatchesState = extensionCtx.globalState.get('downloaded-patches', {})
+    const notDownloadedPatches = allRemotePatches.filter(url => !downloadedPatchesState[url])
+    if (notDownloadedPatches.length === 0) {
         const updatePeriod = getExtensionSetting('updatePeriod')
         if (updatePeriod === 'never') return
         const lastUpdate = extensionCtx.globalState.get('last-update', 0)
@@ -28,15 +31,15 @@ const updateRemotePatches = async (force = false) => {
         if (updatePeriod === 'monthly' && Date.now() - lastUpdate < 30 * 24 * ONE_DAY) return
     }
 
-    // note: it doesn't work
-    if (!isOnline()) {
+    if (!(await isOnline())) {
         await friendlyNotification('You need an internet connection to download patches', 'no-internet', 'warn')
         return
     }
+
     // todo also sync hashes of downloaded patches to ensure there is no desync between machines
     const downloadedPatches = {} as DownloadedPatchesStore
     const failed = [] as string[]
-    for (const remoteUrl of toDownload) {
+    for (const remoteUrl of allRemotePatches) {
         try {
             const { body } = await got(remoteUrl)
             downloadedPatches[remoteUrl] = JSON.parse(stripJsonComments(body))
@@ -45,7 +48,8 @@ const updateRemotePatches = async (force = false) => {
             console.error(err)
         }
     }
-    if (failed.length) {
+
+    if (failed.length > 0) {
         const action = await friendlyNotification(
             `Failed to download ${failed.length} patches, see output for more info`,
             'download-fail',
@@ -57,11 +61,17 @@ const updateRemotePatches = async (force = false) => {
             console.show(true)
         }
     }
+
     await extensionCtx.globalState.update('last-update', Date.now())
     await extensionCtx.globalState.update('downloaded-patches', downloadedPatches)
 }
 
 class PatchSyntaxError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = 'PatchSyntaxError'
+    }
+
     override name = 'PatchSyntaxError'
 }
 
@@ -74,12 +84,14 @@ const getDevExt = (id: string): ExtInterface | undefined => {
     const uri = vscode.Uri.file(path)
     return {
         extensionUri: uri,
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         packageJSON: require(Utils.joinPath(uri, 'package.json').fsPath),
         isActive: false,
     }
 }
 
 const appliedPatchesPackageJsonKey = 'customPatches-appliedPatches'
+// eslint-disable-next-line complexity
 const applyPatches = async (type: 'local' | 'remote') => {
     const silentPatchErrors = getExtensionSetting('silentPatchErrors')
     const { fs } = vscode.workspace
@@ -107,6 +119,7 @@ const applyPatches = async (type: 'local' | 'remote') => {
             console.log(`Skipping patch for ${extId} because it is disabled/not installed.`)
             continue
         }
+
         const addPatchHashes = {} as Record<string, string[]>
         for (const packetPatch of packetPatches) {
             const patchHash = `${type}-${crypto.createHash('md5').update(JSON.stringify(packetPatch)).digest('hex')}`
@@ -115,17 +128,20 @@ const applyPatches = async (type: 'local' | 'remote') => {
                     console.log(`Skipping patch ${patchHash} for ${extId} because it was already applied.`)
                     return true
                 }
+
                 return false
             }
 
             if (checkSkipPatch(ext.packageJSON)) {
                 continue
             }
+
             // double check that patch is not already applied, it will be happening until next window reload, so it should't be a performance issue
             const actualPackageJson = JSON.parse(await fs.readFile(Utils.joinPath(ext.extensionUri, 'package.json')).then(buf => buf.toString()))
             if (checkSkipPatch(actualPackageJson)) {
                 continue
             }
+
             try {
                 const patchedFiles = [] as string[]
                 for (const { file, patches, fileCanBeMissing } of packetPatch.patches) {
@@ -134,15 +150,16 @@ const applyPatches = async (type: 'local' | 'remote') => {
                     try {
                         // todo patch in parallel
                         fileContents = String(await fs.readFile(targetFileUri))
-                    } catch (err) {
+                    } catch {
                         fileContents = undefined
                     }
+
                     if (fileContents === undefined) {
                         if (fileCanBeMissing) continue
                         else throw new Error(`Required file to patch ${file} is missing`)
                     }
 
-                    if (!patches.length) continue
+                    if (patches.length === 0) continue
 
                     const backupFile = targetFileUri.with({
                         path: `${targetFileUri.path}.backup`,
@@ -173,6 +190,7 @@ const applyPatches = async (type: 'local' | 'remote') => {
                 }
             }
         }
+
         const packageJsonUri = Utils.joinPath(ext.extensionUri, 'package.json')
         await fs.writeFile(
             packageJsonUri,
@@ -185,7 +203,7 @@ const applyPatches = async (type: 'local' | 'remote') => {
             }),
         )
         const patchedExtensions = extensionCtx.globalState.get<string[]>('patched-extensions', [])
-        extensionCtx.globalState.update('patched-extensions', [...patchedExtensions, extId])
+        await extensionCtx.globalState.update('patched-extensions', [...patchedExtensions, extId])
     }
 
     if (appliedPatches) {
@@ -194,14 +212,14 @@ const applyPatches = async (type: 'local' | 'remote') => {
             if (getExtensionSetting('restartExtHost') === 'manual') {
                 const choice = await vscode.window.showInformationMessage(`Applied ${appliedPatches} extension patches.`, 'Restart extension host')
                 if (choice === 'Restart extension host') {
-                    vscode.commands.executeCommand('workbench.action.restartExtensionHost')
+                    void vscode.commands.executeCommand('workbench.action.restartExtensionHost')
                 }
             } else {
-                vscode.window.showInformationMessage(`Applied ${appliedPatches} extension patches. Restarting extension host...`)
-                vscode.commands.executeCommand('workbench.action.restartExtensionHost')
+                void vscode.window.showInformationMessage(`Applied ${appliedPatches} extension patches. Restarting extension host...`)
+                void vscode.commands.executeCommand('workbench.action.restartExtensionHost')
             }
         } else {
-            vscode.window.showInformationMessage(`Applied ${appliedPatches} extension patches.`)
+            void vscode.window.showInformationMessage(`Applied ${appliedPatches} extension patches.`)
         }
     }
 }
@@ -215,25 +233,25 @@ export default async () => {
 
     watchExtensionSettings(['localPatches', 'remotePatches'], async key => {
         if (key === 'remotePatches') {
-            await updateRemotePatches(true)
+            await updateRemotePatches()
         }
+
         await applyPatches(key === 'localPatches' ? 'local' : 'remote')
     })
 
     registerExtensionCommand('unpatchExtensions', () => {
         const quickPick = vscode.window.createQuickPick()
-        const extensions = _.uniq(extensionCtx.globalState.get('patched-extensions', []))
-        quickPick.items = [
-            ...extensions.map(extId => {
-                const ext = vscode.extensions.getExtension(extId)
-                return {
-                    label: `${extId}${ext ? '' : ' (disabled)'}`,
-                }
-            }),
-            // {
-            //     label: 'Unpatch all',
-            // }
-        ]
+        const extensions = _.uniq(extensionCtx.globalState.get('patched-extensions', [] as string[]))
+        quickPick.items = extensions.map(extId => {
+            const ext = vscode.extensions.getExtension(extId)
+            return {
+                label: `${extId}${ext ? '' : ' (disabled)'}`,
+            }
+        })
+        // {
+        //     label: 'Unpatch all',
+        // }
+
         quickPick.onDidHide(quickPick.dispose)
         quickPick.onDidAccept(async () => {
             const selected = quickPick.selectedItems[0]
@@ -246,7 +264,7 @@ export default async () => {
             const ext = vscode.extensions.getExtension(extId!) ?? getDevExt(extId!)
             if (!ext) return
             const patchedExtensions = extensionCtx.globalState.get<string[]>('patched-extensions', [])
-            extensionCtx.globalState.update(
+            await extensionCtx.globalState.update(
                 'patched-extensions',
                 patchedExtensions.filter(id => id !== extId),
             )
@@ -255,8 +273,11 @@ export default async () => {
             const paths = _.uniq(Object.values(json[appliedPatchesPackageJsonKey]).flat()) as string[]
             for (const path of paths) {
                 console.log('restoring backup', path)
-                vscode.workspace.fs.rename(Utils.joinPath(ext.extensionUri, path + '.backup'), Utils.joinPath(ext.extensionUri, path), { overwrite: true })
+                await vscode.workspace.fs.rename(Utils.joinPath(ext.extensionUri, `${path}.backup`), Utils.joinPath(ext.extensionUri, path), {
+                    overwrite: true,
+                })
             }
+
             json[appliedPatchesPackageJsonKey] = {}
             // write back json
             await vscode.workspace.fs.writeFile(packageJsonUri, new TextEncoder().encode(JSON.stringify(json, undefined, 4)))
