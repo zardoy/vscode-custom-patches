@@ -56,3 +56,14 @@ it('Multiple search queries', () => {
         }),
     ).toMatchInlineSnapshot(`"Hello world, testing universe, ok?"`)
 })
+
+it.only('Regex search query', () => {
+    expect(
+        applyUserPatchToText('', ':Test, test!', {
+            search: '/[Tt]est,?/g',
+            insertText: 'world',
+            insertMode: 'replace',
+            searchMode: 'regex',
+        }),
+    ).toMatchInlineSnapshot(`":world world!"`)
+})

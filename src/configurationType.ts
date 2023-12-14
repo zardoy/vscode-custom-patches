@@ -16,11 +16,12 @@ export type Configuration = {
 }
 
 export type FileJsonPatch = {
+    /** Can be regex if searchMode is regex and the part start with `/` e.g. `/require\(['"]vscode['"]\)/` (note that json require double backward slashes). It does support flags e.g. g for multiple */
     search: string | string[]
     /**
      * @default single
      */
-    searchMode?: 'single' | 'multiple'
+    searchMode?: 'single' | 'multiple' | 'regex'
     /**
      * Applied after removeRange is applied
      */

@@ -40,14 +40,33 @@ export const applyUserPatchToText = (
     const lastSourceNeedle = sourcemapNeedles.length > 0 ? findInSource!(sourcemapNeedles) : undefined
     const foundIndexes = [] as number[]
 
+    const parseRegexFromString = (s: string) => {
+        if (searchMode !== 'regex') return null
+        if (!s.startsWith('/') || s.split('/').length < 2) return null
+        const flags = s.slice(s.lastIndexOf('/') + 1)
+        const regex = s.slice(1, -1 - flags.length)
+        return new RegExp(regex, flags)
+    }
+
+    let matchedLength = [] as number[]
     const findNextIndex = (isFirst: boolean) => {
         let curIndex = isFirst ? lastSourceNeedle?.offset ?? -1 : foundIndexes.at(-1)!
         let curSearchQuery: string
         for (const s of regularNeedles) {
             const newIndexStart = curIndex + 1
-            curIndex = text.indexOf(s, newIndexStart)
             curSearchQuery = s
-            if (curIndex === -1) break
+            const regex = parseRegexFromString(s)
+            if (regex) {
+                regex.lastIndex = newIndexStart
+                const match = regex.exec(text)
+                curIndex = match?.index ?? -1
+                if (!match) break
+                matchedLength.push(match[0].length)
+            } else {
+                curIndex = text.indexOf(s, newIndexStart)
+                if (curIndex === -1) break
+                matchedLength.push(s.length)
+            }
         }
 
         if (curIndex === -1) {
@@ -61,14 +80,21 @@ export const applyUserPatchToText = (
 
     findNextIndex(true)
     let continueWhile = true
-    if (searchMode === 'multiple') {
+    // todo better flags support at all levers
+    const isRegexAll = parseRegexFromString(regularNeedles[0]!)?.flags.includes('g')
+    if (searchMode === 'multiple' || isRegexAll) {
         while (continueWhile) {
             continueWhile = findNextIndex(false)
         }
     }
 
-    const lastNeedleLength = regularNeedles.at(-1)?.length ?? lastSourceNeedle!.name.length
+    if (!matchedLength.length) {
+        matchedLength = [lastSourceNeedle!.name.length]
+    }
+
     for (const [i, curIndex] of foundIndexes.entries()) {
+        const matchLength = matchedLength[i]!
+
         const patchLaterIndexes = (offset: number) => {
             for (let j = i + 1; j < foundIndexes.length; j++) {
                 foundIndexes[j] += offset
@@ -81,7 +107,7 @@ export const applyUserPatchToText = (
         }
 
         if (removeRangeAfter) {
-            text = text.slice(0, curIndex + lastNeedleLength + removeRangeAfter[0]) + text.slice(curIndex + lastNeedleLength + removeRangeAfter[1])
+            text = text.slice(0, curIndex + matchLength + removeRangeAfter[0]) + text.slice(curIndex + matchLength + removeRangeAfter[1])
             patchLaterIndexes(-removeRangeAfter[1] + removeRangeAfter[0])
         }
 
@@ -95,12 +121,12 @@ export const applyUserPatchToText = (
 
             let beforeIndex = curIndex + insertOffset
             if (insertMode === 'after') {
-                beforeIndex += lastNeedleLength
+                beforeIndex += matchLength
             }
 
             let afterIndex = beforeIndex
             if (insertMode === 'replace') {
-                afterIndex += lastNeedleLength
+                afterIndex += matchLength
             }
 
             text = text.slice(0, beforeIndex) + insertText + text.slice(afterIndex)
